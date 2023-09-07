@@ -15,5 +15,10 @@ func FullTypeName(t reflect.Type) string {
 // FullTypeNameOf returns the full qualified name of the given interface
 // The fully qualified name is the combination of the type PkgPath and its Name.
 func FullTypeNameOf(obj interface{}) string {
-	return FullTypeName(reflect.TypeOf(obj))
+	rv := reflect.ValueOf(obj)
+	if rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
+	}
+
+	return FullTypeName(rv.Type())
 }

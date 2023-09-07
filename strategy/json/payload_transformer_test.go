@@ -4,13 +4,13 @@ package json_test
 
 import (
 	"encoding/json"
+	anotherPayload "github.com/hellofresh/goengine/v2/internal/mocks/another/payload"
+	"github.com/hellofresh/goengine/v2/internal/mocks/payload"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	anotherPayload "github.com/hellofresh/goengine/v2/internal/mocks/another/payload"
-	"github.com/hellofresh/goengine/v2/internal/mocks/payload"
 	strategyJSON "github.com/hellofresh/goengine/v2/strategy/json"
 )
 
@@ -18,6 +18,23 @@ type simpleType struct {
 	Test  string
 	Order int
 }
+
+type anotherSimpleType struct {
+	Tested  string
+	Ordered int
+}
+
+type andAnotherSimpleType struct {
+	Testing  string
+	Ordering int
+}
+
+type unMarshableType struct {
+	Bad func()
+}
+
+type order struct{ order int }
+type box struct{ box int }
 
 func TestPayloadTransformer(t *testing.T) {
 	t.Run("same type on different packages", func(t *testing.T) {
@@ -41,22 +58,42 @@ func TestPayloadTransformer_ConvertPayload(t *testing.T) {
 
 	t.Run("valid tests", func(t *testing.T) {
 		type testCase struct {
-			title            string
-			payloadType      string
-			payloadInitiator strategyJSON.PayloadInitiator
-			payloadData      interface{}
-			expectedData     string
+			title             string
+			payloadInitiators map[string]strategyJSON.PayloadInitiator
+			payloadType       []string
+			payloadData       []interface{}
+			expectedData      []string
 		}
 
 		testCases := []testCase{
 			{
 				"convert payload",
-				"tests",
-				func() interface{} {
-					return &simpleType{}
+				map[string]strategyJSON.PayloadInitiator{
+					"another": func() interface{} {
+						return &anotherSimpleType{}
+					},
+					"tests": func() interface{} {
+						return &simpleType{}
+					},
+					"andAnother": func() interface{} {
+						return andAnotherSimpleType{}
+					},
 				},
-				&simpleType{Test: "test", Order: 1},
-				`{"Test":"test","Order":1}`,
+				[]string{
+					"tests",
+					"another",
+					"andAnother",
+				},
+				[]interface{}{
+					&simpleType{Test: "test", Order: 1},
+					&anotherSimpleType{Tested: "tested", Ordered: 2},
+					andAnotherSimpleType{Testing: "testing", Ordering: 3},
+				},
+				[]string{
+					`{"Test":"test","Order":1}`,
+					`{"Tested":"tested","Ordered":2}`,
+					`{"Testing":"testing","Ordering":3}`,
+				},
 			},
 		}
 
@@ -64,14 +101,18 @@ func TestPayloadTransformer_ConvertPayload(t *testing.T) {
 			t.Run(tc.title, func(t *testing.T) {
 				asserts := assert.New(t)
 				transformer := strategyJSON.NewPayloadTransformer()
-				require.NoError(t,
-					transformer.RegisterPayload(tc.payloadType, tc.payloadInitiator),
-				)
+				for payloadType, payloadInitiator := range tc.payloadInitiators {
+					require.NoError(t,
+						transformer.RegisterPayload(payloadType, payloadInitiator),
+					)
+				}
 
-				name, data, err := transformer.ConvertPayload(tc.payloadData)
-				asserts.NoError(err)
-				asserts.Equal(tc.payloadType, name)
-				asserts.JSONEq(tc.expectedData, string(data))
+				for i, payloadData := range tc.payloadData {
+					name, data, err := transformer.ConvertPayload(payloadData)
+					asserts.NoError(err)
+					asserts.Equal(tc.payloadType[i], name)
+					asserts.JSONEq(tc.expectedData[i], string(data))
+				}
 			})
 		}
 	})
@@ -95,9 +136,9 @@ func TestPayloadTransformer_ConvertPayload(t *testing.T) {
 				"error marshalling payload",
 				func() interface{} {
 					// Need to register something that is not json serializable.
-					return func() {}
+					return &unMarshableType{}
 				},
-				func() {},
+				unMarshableType{},
 				strategyJSON.ErrPayloadCannotBeSerialized,
 			},
 		}
@@ -132,15 +173,6 @@ func TestJSONPayloadTransformer_CreatePayload(t *testing.T) {
 		}
 
 		testCases := []validTestCase{
-			{
-				"[]byte string slice",
-				"string_slice",
-				func() interface{} {
-					return []string{}
-				},
-				[]byte(`["test","123","lala"]`),
-				[]string{"test", "123", "lala"},
-			},
 			{
 				"struct",
 				"struct",
@@ -255,14 +287,14 @@ func TestJSONPayloadTransformer_RegisterPayload(t *testing.T) {
 	t.Run("register a type", func(t *testing.T) {
 		transformer := strategyJSON.NewPayloadTransformer()
 		err := transformer.RegisterPayload("test", func() interface{} {
-			return &struct{ order int }{}
+			return &simpleType{}
 		})
 
 		assert.Nil(t, err)
 
 		t.Run("duplicate registration", func(t *testing.T) {
 			err := transformer.RegisterPayload("test", func() interface{} {
-				return &struct{ order int }{}
+				return &simpleType{}
 			})
 
 			assert.Equal(t, strategyJSON.ErrDuplicatePayloadType, err)
@@ -294,6 +326,22 @@ func TestJSONPayloadTransformer_RegisterPayload(t *testing.T) {
 				},
 				strategyJSON.ErrInitiatorInvalidResult,
 			},
+			{
+				"anonymous initiator",
+				"anonymous",
+				func() interface{} {
+					return &struct{ order int }{}
+				},
+				strategyJSON.ErrInvalidPayloadName,
+			},
+			{
+				"empty payload type",
+				"",
+				func() interface{} {
+					return &simpleType{}
+				},
+				strategyJSON.ErrInvalidPayloadType,
+			},
 		}
 
 		for _, testCase := range testCases {
@@ -312,10 +360,10 @@ func TestPayloadTransformer_RegisterMultiplePayloads(t *testing.T) {
 		transformer := strategyJSON.NewPayloadTransformer()
 		err := transformer.RegisterPayloads(map[string]strategyJSON.PayloadInitiator{
 			"order": func() interface{} {
-				return &struct{ order int }{}
+				return &order{}
 			},
 			"box": func() interface{} {
-				return &struct{ box int }{}
+				return &box{}
 			},
 		})
 

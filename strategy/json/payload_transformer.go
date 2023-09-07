@@ -18,6 +18,10 @@ var (
 	ErrPayloadCannotBeSerialized = errors.New("goengine: payload cannot be serialized")
 	// ErrPayloadNotRegistered occurs when the payload is not registered
 	ErrPayloadNotRegistered = errors.New("goengine: payload is not registered")
+	// ErrInvalidPayloadType occurs when a payload type is an empty string
+	ErrInvalidPayloadType = errors.New("goengine: invalid payload type provided")
+	// ErrInvalidPayloadName occurs when a payload name is an empty string
+	ErrInvalidPayloadName = errors.New("goengine: invalid payload name provided")
 	// ErrUnknownPayloadType occurs when a payload type is unknown
 	ErrUnknownPayloadType = errors.New("goengine: unknown payload type provided")
 	// ErrInitiatorInvalidResult occurs when a PayloadInitiator returns a reference to nil
@@ -87,6 +91,10 @@ func (p *PayloadTransformer) ResolveName(payload interface{}) (string, error) {
 
 // RegisterPayload registers a payload type and the way to initialize it with the factory
 func (p *PayloadTransformer) RegisterPayload(payloadType string, initiator PayloadInitiator) error {
+	if payloadType == "" {
+		return ErrInvalidPayloadType
+	}
+
 	if _, known := p.types[payloadType]; known {
 		return ErrDuplicatePayloadType
 	}
@@ -102,8 +110,12 @@ func (p *PayloadTransformer) RegisterPayload(payloadType string, initiator Paylo
 		return ErrInitiatorInvalidResult
 	}
 
-	p.names[reflectUtil.FullTypeName(rv.Type())] = payloadType
+	payloadName := reflectUtil.FullTypeNameOf(checkPayload)
+	if payloadName == "" {
+		return ErrInvalidPayloadName
+	}
 
+	p.names[payloadName] = payloadType
 	p.types[payloadType] = PayloadType{
 		initiator:      initiator,
 		isPtr:          isPtr,
